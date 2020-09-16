@@ -47,6 +47,9 @@ LDT 为局部描述符表（Local Descriptor Table），与 GDT 不同，系统�
 * 第 3bit：选择子类型（TI），0 表示在 GDT 中选择，1 表示在 LDT 中选择；
 * 低 2bit：请求特权级（RPL），共有 0-3 共 4 个特权级，每当一个程序试图访问某一个段时，就将该程序所拥有的特权级写入 RPL，如果访问的段描述符特权级不高于 RPL，则可以访问；
 
+## MMU
+MMU 属于体系结构层次，对操作系统而言，只需要将页目录地址载入 CR3 寄存器即可
+
 ## 硬盘 LBA 寻址
 CHS（Cylinders-Heads-Sectors）即以柱面、磁头、扇区为单位寻址，而逻辑区块地址（Logical Block Address）以扇区号为单位寻址，其涉及端口为 0x1F0~0x1F7
 
@@ -696,7 +699,6 @@ bootstack:
 bootstacktop:
 ```
 `i386_init`位于 kern/init.c，其作用是执行一些初始化工作后跳转到命令行：
-
 ```c
 void
 i386_init(void)
@@ -710,7 +712,7 @@ i386_init(void)
 	cons_init();
 
   // For Lab 1 Exercise 8
-	cprintf("6828 decimal is %o octal!\n", 6828);
+	cprintf("\n6828 decimal is %o octal!\n", 6828);
 
 	// For Lab 1 Exercise 10, 11
 	test_backtrace(5);
@@ -889,7 +891,7 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 		stabstr_end = __STABSTR_END__;
 	} else {
 		// addr 在用户地址空间
-  	        panic("User address");
+		panic("User address");
 	}
 
 	// 符号名称表有误
@@ -1085,7 +1087,7 @@ cprintf("x=%d y=%d", 3);
 ```asm
 mov    $0x118000,%eax
 ```
-而栈大小`KSTKSIZE`定义于 inc/memlayout.h，为 8 * 4096B ，所以栈的内存布局为 0x110000~0x118000
+而栈大小`KSTKSIZE`定义于 inc/memlayout.h，为 8 * 4096B ，所以栈的内存布局为 0xf0110000~0xf0118000
 
 ## Exercise 11
 > Exercise 11. Implement the backtrace function as specified above. Use the same format as in the example, since otherwise the grading script will be confused. When you think you have it working right, run make grade to see if its output conforms to what our grading script expects, and fix it if it doesn't. After you have handed in your Lab 1 code, you are welcome to change the output format of the backtrace function any way you like.

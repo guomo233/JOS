@@ -3,17 +3,75 @@
 ## CMOS
 CMOS 是用于保存 BIOS 设置的 RAM，由独立电池供电
 
-## 物理内存布局
+## 内存布局
+
+### 物理内存
 经过 Lab 1，物理内存布局如下：
 
 ![物理内存布局](images/物理内存布局.png)
 
 * 0x00000~0xA0000：basemem，其中 ELF 头、Boot Loader 在后期用不上了，可以被覆盖；
 * 0xA0000~0x100000：IO Hole，不可用；
-* 0x100000 以上：extmem，通过`objdump -h obj/kern/kernel`可以发现 BSS 是最后一段，所以 BSS 后的内存是未使用的；
+* 0x100000 以上：extmem，通过`objdump -h obj/kern/kernel`可以发现 BSS 是内核所占的最后一段，所以 BSS 后的内存是未使用的；
 
-## KVA 与 VA
-目前内核只能在基于 Lab 1 设置的简易页表实现的虚拟地址空间寻址，为了加以区分，之后的描述中将该虚拟地址称为 KVA，将 Lab 2 中通过新页表将实现的新虚拟地址空间称为 VA，物理地址称为 PA
+### 虚拟内存
+Lab 2 将实现新的页表来代替 Lab 1 中的简易页表，最终将实现如下形式的虚拟地址空间：
+```
+   4 Gig -------->  +------------------------------+
+                    |                              | RW/--
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    :              .               :
+                    :              .               :
+                    :              .               :
+                    |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~| RW/--
+                    |                              | RW/--
+                    |   Remapped Physical Memory   | RW/--
+                    |                              | RW/--
+   KERNBASE, ---->  +------------------------------+ 0xf0000000      --+
+   KSTACKTOP        |     CPU0's Kernel Stack      | RW/--  KSTKSIZE   |
+                    | - - - - - - - - - - - - - - -|                   |
+                    |      Invalid Memory (*)      | --/--  KSTKGAP    |
+                    +------------------------------+                   |
+                    |     CPU1's Kernel Stack      | RW/--  KSTKSIZE   |
+                    | - - - - - - - - - - - - - - -|                 PTSIZE
+                    |      Invalid Memory (*)      | --/--  KSTKGAP    |
+                    +------------------------------+                   |
+                    :              .               :                   |
+                    :              .               :                   |
+   MMIOLIM ------>  +------------------------------+ 0xefc00000      --+
+                    |       Memory-mapped I/O      | RW/--  PTSIZE
+ULIM, MMIOBASE -->  +------------------------------+ 0xef800000
+                    |  Cur. Page Table (User R-)   | R-/R-  PTSIZE
+   UVPT      ---->  +------------------------------+ 0xef400000
+                    |          RO PAGES            | R-/R-  PTSIZE
+   UPAGES    ---->  +------------------------------+ 0xef000000
+                    |           RO ENVS            | R-/R-  PTSIZE
+UTOP,UENVS ------>  +------------------------------+ 0xeec00000
+UXSTACKTOP -/       |     User Exception Stack     | RW/RW  PGSIZE
+                    +------------------------------+ 0xeebff000
+                    |       Empty Memory (*)       | --/--  PGSIZE
+   USTACKTOP  --->  +------------------------------+ 0xeebfe000
+                    |      Normal User Stack       | RW/RW  PGSIZE
+                    +------------------------------+ 0xeebfd000
+                    |                              |
+                    |                              |
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                    .                              .
+                    .                              .
+                    .                              .
+                    |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
+                    |     Program Data & Heap      |
+   UTEXT -------->  +------------------------------+ 0x00800000
+   PFTEMP ------->  |       Empty Memory (*)       |        PTSIZE
+                    |                              |
+   UTEMP -------->  +------------------------------+ 0x00400000      --+
+                    |       Empty Memory (*)       |                   |
+                    | - - - - - - - - - - - - - - -|                   |
+                    |  User STAB Data (optional)   |                 PTSIZE
+   USTABDATA ---->  +------------------------------+ 0x00200000        |
+                    |       Empty Memory (*)       |                   |
+   0 ------------>  +------------------------------+                 --+
+```
 
 # 代码解析
 
@@ -77,7 +135,7 @@ pa2page(physaddr_t pa)
 	return &pages[PGNUM(pa)];
 }
 ```
-也可以通过 kern/pmap.h 中的`page2kva`换算出`PageInfo *`对应页的 KVA：
+也可以通过 kern/pmap.h 中的`page2kva`换算出`PageInfo *`对应页的虚拟地址：
 ```c
 static inline physaddr_t
 page2pa(struct PageInfo *pp)
@@ -89,14 +147,13 @@ page2pa(struct PageInfo *pp)
 }
 ```
 定义于 kern/pmap.c 中的`page_init`负责初始化：
-
 ```c
 struct PageInfo *pages;		             // 数组，记录所有页
 static struct PageInfo *page_free_list // 空闲页链表
 
 void
 page_init(void)
-{ 
+{
   // IDT
 	pages[0].pp_ref = 1 ;
 	
@@ -123,10 +180,8 @@ page_init(void)
 	}
 }
 ```
-kern/pmap.c 中的`check_page_free_list`用于剔除空闲页链表中不合法的页：
+经过之前的初始化，`check_page_free_list`的顺序为物理地址从高到低，kern/pmap.c 中的`check_page_free_list`用于调整空闲页链表结构以及初始化空闲页的内存值：
 ```c
-// only_low_memory == 1 表示物理地址在 [0, 4M) 内的页合法
-// only_low_memory == 0 表示物理地址在 [0, 4G) 内的页合法
 static void
 check_page_free_list(bool only_low_memory)
 {
@@ -138,17 +193,18 @@ check_page_free_list(bool only_low_memory)
 	if (!page_free_list)
 		panic("'page_free_list' is a null pointer!");
 
+  // 将 [0, 4M) 的空闲页移到空闲页链表前端，以便 page_alloc 优先分配
 	if (only_low_memory) {
 		struct PageInfo *pp1, *pp2;
-		struct PageInfo **tp[2] = { &pp1, &pp2 }; // 两个链表，分别维护合法与不合法的页
+		struct PageInfo **tp[2] = { &pp1, &pp2 }; // 两个链表，分别维护 [0, 4M) 与 [4M, 4G) 的页
 		for (pp = page_free_list; pp; pp = pp->pp_link) {
-			int pagetype = PDX(page2pa(pp)) >= pdx_limit; // 0 合法，1 不合法
+			int pagetype = PDX(page2pa(pp)) >= pdx_limit;
 			*tp[pagetype] = pp;
 			tp[pagetype] = &pp->pp_link;
 		}
-		*tp[1] = 0;
-		*tp[0] = pp2;
-		page_free_list = pp1; // 只留下合法的
+		*tp[1] = 0;   // [4M, 4G) 中最后一个空闲页的 pp_link 指向 NULL
+		*tp[0] = pp2; // [0, 4M) 中最后一个空闲页的 pp_link 指向 [4M, 4G) 空闲页链表
+		page_free_list = pp1;
 	}
 
 	// 如果空闲页链表中不小心记录了被使用的页，将内存值破坏，尝试引起运行出错来让人发现问题
@@ -156,33 +212,7 @@ check_page_free_list(bool only_low_memory)
 		if (PDX(page2pa(pp)) < pdx_limit)
 			memset(page2kva(pp), 0x97, 128);
 
-	first_free_page = (char *) boot_alloc(0); // boot_alloc 已分配到的位置
-	for (pp = page_free_list; pp; pp = pp->pp_link) {
-    // 确保刚刚到操作没有把空闲页链表自身破坏
-		assert(pp >= pages);
-		assert(pp < pages + npages);
-		assert(((char *) pp - (char *) pages) % sizeof(*pp) == 0);
-
-		// 进一步检查空闲页合法性
-		assert(page2pa(pp) != 0); // 不是 IDT
-		assert(page2pa(pp) != IOPHYSMEM); // 不是 IO Hole 左边界
-		assert(page2pa(pp) != EXTPHYSMEM - PGSIZE); // 不是 IO Hole 右边界
-		assert(page2pa(pp) != EXTPHYSMEM); // 不是内核
-		assert(page2pa(pp) < EXTPHYSMEM || (char *) page2kva(pp) >= first_free_page); // 不是 boot_alloc 已分配的
-
-    // 统计 basemem 和 extmem 空闲页数量
-		if (page2pa(pp) < EXTPHYSMEM)
-			++nfree_basemem;
-		else
-			++nfree_extmem;
-	}
-
-  // basemem 和 extmem 都应该有空闲页
-	assert(nfree_basemem > 0);
-	assert(nfree_extmem > 0);
-
-	cprintf("check_page_free_list() succeeded!\n");
-}
+  ...
 ```
 
 ## 动态内存分配
@@ -261,8 +291,9 @@ kern/mmu.h 中的`PTE_ADDR`用于提取页表项中保存的物理地址（剔�
 ```c
 #define PTE_ADDR(pte)	((physaddr_t) (pte) & ~0xFFF)
 ```
-因为页表保存的为物理地址，内核要想访问，需要将 PA 转化为 KVA，可由如下宏进行：
+因为当前已经开启了地址映射，所以内核只能在虚拟地址空间寻址，而页表保存的为物理地址，内核要想访问，需要将物理地址转化为虚拟地址，可由如下宏进行：
 ```c
+// 虚拟地址 -> 物理地址
 #define PADDR(kva) _paddr(__FILE__, __LINE__, kva)
 
 static inline physaddr_t
@@ -273,6 +304,7 @@ _paddr(const char *file, int line, void *kva)
 	return (physaddr_t)kva - KERNBASE;
 }
 
+// 物理地址 -> 虚拟地址
 #define KADDR(pa) _kaddr(__FILE__, __LINE__, pa)
 
 static inline void*
@@ -282,9 +314,8 @@ _kaddr(const char *file, int line, physaddr_t pa)
 		_panic(file, line, "KADDR called with invalid pa %08lx", pa);
 	return (void *)(pa + KERNBASE);
 }
-
 ```
-kern/pmap.c 下的`pgdir_walk`用于返回 VA 对应的页表项指针：
+kern/pmap.c 下的`pgdir_walk`用于返回虚拟地址`va`对应的页表项指针：
 ```c
 pte_t *
 pgdir_walk(pde_t *pgdir, const void *va, int create)
@@ -311,13 +342,13 @@ pgdir_walk(pde_t *pgdir, const void *va, int create)
 	return (pte_t *)KADDR(PTE_ADDR(*dir_entry)) + PTX(va) ;
 }
 ```
-kern/pmap.c 中的`boot_map_region`将 VA 下的`size`个字节线性映射到 PA，由于该函数只在启动初期完成一些关键内存区域的静态映射，所以无需在`PageInfo`更新物理页状态以及检查对应页表项是否已被使用：
+kern/pmap.c 中的`boot_map_region`将虚拟地址`va`下的`size`个字节线性映射到物理地址`pa`，由于该函数只在启动初期完成一些关键内存区域的静态映射，所以无需在`PageInfo`更新物理页状态以及检查对应页表项是否已被使用：
 ```c
 static void
 boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm)
 {
 	// Fill this function in
-	for (int i = 0; i < size; i += PGSIZE)
+	for (size_t i = 0; i < size; i += PGSIZE)
 	{
 		pte_t *pte = pgdir_walk(pgdir, (void *)va, 1) ;
 		if (!pte) panic("no more page to finish boot_map_region!") ;
@@ -327,7 +358,7 @@ boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm
 	}
 }
 ```
-kern/pmap.c 中的`page_lookup`返回 VA 对应的物理页和页表项指针：
+kern/pmap.c 中的`page_lookup`返回虚拟地址`va`对应的物理页和页表项指针：
 ```c
 struct PageInfo *
 page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
@@ -344,7 +375,7 @@ page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
 	return pa2page(PTE_ADDR(*pte));
 }
 ```
-kern/pmap.c 中的`page_remove`用于从页表中删除 VA 的映射：
+kern/pmap.c 中的`page_remove`用于从页表中删除虚拟地址`va`的映射：
 ```c
 void
 page_remove(pde_t *pgdir, void *va)
@@ -358,7 +389,7 @@ page_remove(pde_t *pgdir, void *va)
 	*pte = 0 ;
 }
 ```
-kern/pmap.c 中的`page_insert`将 VA 映射到指定物理页：
+kern/pmap.c 中的`page_insert`将虚拟地址`va`映射到指定物理页：
 ```c
 // 成功返回 0，失败返回 -E_NO_MEM
 int
@@ -373,8 +404,8 @@ page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 	return 0;
 }
 ```
-## 初始化
-在 Lab 2 的 kern/init.c 的`i386_init`中，新增了对内存管理初始化函数`mem_init`的调用，该函数定义于 kern/pmap.c 中，实现如下：
+## 初始化与检查
+在 Lab 2 的 kern/init.c 的`i386_init`中，新增了对函数`mem_init`的调用，该函数定义于 kern/pmap.c 中，用于对内存管理相关功能做初始化和检查：
 ```c
 void
 mem_init(void)
@@ -385,15 +416,11 @@ mem_init(void)
 	// 物理内存检测
 	i386_detect_memory();
 
-	// Remove this line when you're ready to test this function.
-	// panic("mem_init: This function is not finished\n");
-
 	// 为页目录分配 1 页内存，并清零
 	kern_pgdir = (pde_t *) boot_alloc(PGSIZE);
 	memset(kern_pgdir, 0, PGSIZE);
 
-  // 递归的将页目录自身映射到页表，权限为用户、内核可读
-  // UVPT: 页目录对应的 VA（硬编码，且在用户空间）
+  // 将虚拟地址 UVPT 映射到 kern_pgdir 所在物理地址
 	kern_pgdir[PDX(UVPT)] = PADDR(kern_pgdir) | PTE_U | PTE_P;
 
 	// 为 pages 分配空间
@@ -401,71 +428,42 @@ mem_init(void)
 	pages = (struct PageInfo *) boot_alloc (npages * sizeof(struct PageInfo)) ;
   memset (pages, 0, npages * sizeof(struct PageInfo)) ;
 
-  // 初始化 pages
+  // 初始化 pages 和 page_free_list
 	page_init();
 
-	check_page_free_list(1); // 检查
+  // 一些检查
+	check_page_free_list(1); // 将 [0, 4M) 的空闲页调整到空闲页链表前端，以便在新页表替换之前 page_alloc 能正常工作，同时检查 page_free_list 中空闲页的合法性
 	check_page_alloc(); // 检查 page_alloc, page_free 能否正常工作
-	check_page(); // 检查 page_insert, page_remove 等能否正常工作
+	check_page();       // 检查 page_insert, page_remove 等能否正常工作
 
-	//////////////////////////////////////////////////////////////////////
-	// Now we set up virtual memory
-
-	//////////////////////////////////////////////////////////////////////
-	// Map 'pages' read-only by the user at linear address UPAGES
-	// Permissions:
-	//    - the new image at UPAGES -- kernel R, user R
-	//      (ie. perm = PTE_U | PTE_P)
-	//    - pages itself -- kernel RW, user NONE
+  // 将虚拟地址 [UPAGES, UPAGES + PTSIZE) 映射到 pages 所在物理地址
 	// Your code goes here:
+  boot_map_region(kern_pgdir, UPAGES, PTSIZE, PADDR(pages), PTE_U | PTE_P) ;
 
-	//////////////////////////////////////////////////////////////////////
-	// Use the physical memory that 'bootstack' refers to as the kernel
-	// stack.  The kernel stack grows down from virtual address KSTACKTOP.
-	// We consider the entire range from [KSTACKTOP-PTSIZE, KSTACKTOP)
-	// to be the kernel stack, but break this into two pieces:
-	//     * [KSTACKTOP-KSTKSIZE, KSTACKTOP) -- backed by physical memory
-	//     * [KSTACKTOP-PTSIZE, KSTACKTOP-KSTKSIZE) -- not backed; so if
-	//       the kernel overflows its stack, it will fault rather than
-	//       overwrite memory.  Known as a "guard page".
-	//     Permissions: kernel RW, user NONE
+  // 将虚拟地址 [KSTACKTOP - KSTKSIZE, KSTACKTOP) 映射到内核栈所在物理地址
 	// Your code goes here:
+  boot_map_region(kern_pgdir, KSTACKTOP - KSTKSIZE, KSTKSIZE, PADDR(bootstack), PTE_W | PTE_P) ;
 
-	//////////////////////////////////////////////////////////////////////
-	// Map all of physical memory at KERNBASE.
-	// Ie.  the VA range [KERNBASE, 2^32) should map to
-	//      the PA range [0, 2^32 - KERNBASE)
-	// We might not have 2^32 - KERNBASE bytes of physical memory, but
-	// we just set up the mapping anyway.
-	// Permissions: kernel RW, user NONE
+	// 将虚拟地址 [KERNBASE, KERNBASE + 256M) 映射到物理地址 [0, 256M)
 	// Your code goes here:
+  boot_map_region(kern_pgdir, KERNBASE, 0xffffffff - KERNBASE, 0, PTE_W | PTE_P) ;
 
-	// Check that the initial page directory has been set up correctly.
+	// 检查上面 3 个区域的映射是否正确
 	check_kern_pgdir();
 
-	// Switch from the minimal entry page directory to the full kern_pgdir
-	// page table we just created.	Our instruction pointer should be
-	// somewhere between KERNBASE and KERNBASE+4MB right now, which is
-	// mapped the same way by both page tables.
-	//
-	// If the machine reboots at this point, you've probably set up your
-	// kern_pgdir wrong.
+	// 将新页目录存入 CR3 寄存器
 	lcr3(PADDR(kern_pgdir));
 
+  // 初始化空闲页内存中的值
 	check_page_free_list(0);
 
-	// entry.S set the really important flags in cr0 (including enabling
-	// paging).  Here we configure the rest of the flags that we care about.
+	// 开启 CR0 中剩余一些位
 	cr0 = rcr0();
 	cr0 |= CR0_PE|CR0_PG|CR0_AM|CR0_WP|CR0_NE|CR0_MP;
 	cr0 &= ~(CR0_TS|CR0_EM);
 	lcr0(cr0);
 
-	// Some more checks, only possible after kern_pgdir is installed.
+	// 进一步检查页目录是否处于加载状态，以保证系统后续工作正常
 	check_page_installed_pgdir();
 }
 ```
-
-
-
-# Exercises

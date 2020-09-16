@@ -1085,7 +1085,7 @@ cprintf("x=%d y=%d", 3);
 
 在 obj/kern/kernel.asm 中找到`movl	$(bootstacktop),%esp`对应于：
 ```asm
-mov    $0x118000,%eax
+mov    $0xf0118000,%eax
 ```
 而栈大小`KSTKSIZE`定义于 inc/memlayout.h，为 8 * 4096B ，所以栈的内存布局为 0xf0110000~0xf0118000
 

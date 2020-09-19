@@ -728,9 +728,9 @@ sys_cputs(const char *s, size_t len)
 static void
 sys_cputs(const char *s, size_t len)
 {
-  // 检查用户指定区域用户自身是否有访问权限
-  // 以免以内核身份触发页错误导致整个系统崩溃
 	// LAB 3: Your code here.
+  // 1. 检查用户是否有访问权限
+  // 2. 检查页的完整性，以免以内核身份触发页错误导致系统终止
 	user_mem_assert(curenv, s, len, PTE_U) ;
 
 	// 调用的 kern/print.c 中的
@@ -835,3 +835,69 @@ page_fault_handler(struct Trapframe *tf)
 	env_destroy(curenv);
 }
 ```
+
+## Debug
+在 user/user.ld 中，将 stab_info 固定载入到了 0x200000：
+```
+.stab_info 0x200000 : {
+		LONG(__STAB_BEGIN__);
+		LONG(__STAB_END__);
+		LONG(__STABSTR_BEGIN__);
+		LONG(__STABSTR_END__);
+	}
+```
+Lab 3 中 kern/kdebug.c 中的`debuginfo_eip`做了如下修改：
+```c
+if (addr >= ULIM) {
+		// addr 在内核地址空间
+		// ...
+	} else {
+		// addr 在用户地址空间
+		// 从 USTABDATA(0x200000) 处读取 stab_info
+		const struct UserStabData *usd = (const struct UserStabData *) USTABDATA;
+
+		// 检查 stab_info 所在页的完整性和访问权限
+		// LAB 3: Your code here.
+		if (user_mem_check(curenv, usd, sizeof(struct UserStabData), PTE_U) < 0)
+			return -1 ;
+
+  	// 从 stab_info 中得到 stab, stabstr 的位置
+		stabs = usd->stabs;
+		stab_end = usd->stab_end;
+		stabstr = usd->stabstr;
+		stabstr_end = usd->stabstr_end;
+
+  	// 检查 stab, stabstr 所在页的完整性和访问权限
+		// LAB 3: Your code here.
+		if (user_mem_check(curenv, stabs, stab_end - stabs, PTE_U) < 0)
+			return -1;
+		if (user_mem_check(curenv, stabstr, stabstr_end - stabstr, PTE_U) < 0)
+			return -1;
+	}
+```
+
+# Questions
+
+## Question 1
+> What is the purpose of having an individual handler function for each exception/interrupt? (i.e., if all exceptions/interrupts were delivered to the same handler, what feature that exists in the current implementation could not be provided?)
+
+目前，中断处理程序都拥有各自的入口，再由 kern/trap.c 中的`trap`函数统一处理，再通过`trap_dispatch`交由不同的处理流程处理。为什么不直接让中断程序在一开始就统一入口？这是因为有的中断处理程序硬件会自动压入中断错误码，有的不会，会导致栈的分布不一样，从而难以由一个函数来统一处理
+
+## Question 2
+> Did you have to do anything to make the user/softint program behave correctly? The grade script expects it to produce a general protection fault (trap 13), but softint's code says int $14. Why should this produce interrupt vector 13? What happens if the kernel actually allows softint's int $14 instruction to invoke the kernel's page fault handler (which is interrupt vector 14)?
+
+虽然 user/softing.c 中调用了如下指令来尝试触发 14 号中断：
+```c
+asm volatile ("int $14");
+```
+但实际上 14 号中断在 kern/trap.c 的`trap_init`中通过`SETGATE`设置为了只能在内核模式下产生（DPL），所以用户因为无权执行这条指令会触发一般保护错误（Trap 13）
+
+## Question 3
+> The break point test case will either generate a break point exception or a general protection fault depending on how you initialized the break point entry in the IDT (i.e., your call to SETGATE from trap_init). Why? How do you need to set it up in order to get the breakpoint exception to work as specified above and what incorrect setup would cause it to trigger a general protection fault?
+
+只有在 kern/trap.c 的`trap_init`中通过`SETGATE`将断点中断的 DPL 设为 3，用户程序下的断点才能正常工作，否则就会像 [Question 2](#Question 2) 一样触发一般保护错误（Trap 13）
+
+## Question 4
+> What do you think is the point of these mechanisms, particularly in light of what the user/softint test program does?
+
+为了不给用户太大的权限去引发一些特殊中断从而让整个系统崩溃

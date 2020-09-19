@@ -375,7 +375,7 @@ page_lookup(pde_t *pgdir, void *va, pte_t **pte_store)
 	return pa2page(PTE_ADDR(*pte));
 }
 ```
-kern/pmap.c 中的`page_remove`用于从页表中删除虚拟地址`va`的映射：
+kern/pmap.c 中的`page_remove`用于从页表中删除虚拟地址`va`的映射，并将物理页使用技术递减（递减到 0 回收）：
 ```c
 void
 page_remove(pde_t *pgdir, void *va)

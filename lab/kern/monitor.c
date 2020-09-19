@@ -10,6 +10,7 @@
 #include <kern/console.h>
 #include <kern/monitor.h>
 #include <kern/kdebug.h>
+#include <kern/trap.h>
 
 #define CMDBUF_SIZE	80	// enough for one VGA text line
 
@@ -25,9 +26,32 @@ static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
 	{ "backtrace", "Stack backtrace:", mon_backtrace },
+	{ "c", "Break Continue:", mon_brkc },
+	{ "s", "Break Step:", mon_brks },
 };
 
 /***** Implementations of basic kernel monitor commands *****/
+int
+mon_brkc(int argc, char **argv, struct Trapframe *tf)
+{
+	if (tf != NULL)
+	{
+		tf->tf_eflags &= ~FL_TF;
+		return -1 ;
+	}
+	return 0;
+}
+
+int
+mon_brks(int argc, char **argv, struct Trapframe *tf)
+{
+	if (tf != NULL)
+	{
+		tf->tf_eflags |= FL_TF;
+		return -1 ;
+	}
+	return 0;
+}
 
 int
 mon_help(int argc, char **argv, struct Trapframe *tf)
@@ -136,6 +160,8 @@ monitor(struct Trapframe *tf)
 	cprintf("Welcome to the JOS kernel monitor!\n");
 	cprintf("Type 'help' for a list of commands.\n");
 
+	if (tf != NULL)
+		print_trapframe(tf);
 
 	while (1) {
 		buf = readline("K> ");

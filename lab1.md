@@ -45,7 +45,7 @@ LDT 为局部描述符表（Local Descriptor Table），与 GDT 不同，系统�
 保护模式下，段寄存器结构：
 * 高 13bit：选择子（Index），索引段描述符在 GDT/LDT 中的位置；
 * 第 3bit：选择子类型（TI），0 表示在 GDT 中选择，1 表示在 LDT 中选择；
-* 低 2bit：请求特权级（RPL），共有 0-3 共 4 个特权级，每当一个程序试图访问某一个段时，就将该程序所拥有的特权级写入 RPL，如果访问的段描述符特权级不高于 RPL，则可以访问；
+* 低 2bit：请求特权级（RPL），其中 CS 段的 RPL 被称为 CPL，即当前特权环，段描述符的 DPL >= max(CPL, RPL) 表示可访问该段；
 
 ## MMU
 MMU 属于体系结构层次，对操作系统而言，只需要将页目录地址载入 CR3 寄存器即可
@@ -300,7 +300,7 @@ readsect(void *dst, uint32_t offset)
 
 ## Kernel
 
-### 地址映射
+### 临时页表
 利用`objdump -h obj/kern/kernel`查看内核的 ELF 信息：
 ```
 obj/kern/kernel:	file format ELF32-i386
@@ -330,7 +330,7 @@ _start = RELOC(entry)
 movl	$(RELOC(entry_pgdir)), %eax
 movl	%eax, %cr3
 
-# 开启地址映射
+# 开启页表映射
 movl	%cr0, %eax
 orl	$(CR0_PE|CR0_PG|CR0_WP), %eax
 movl	%eax, %cr0
@@ -365,7 +365,7 @@ pte_t entry_pgtable[NPTENTRIES] = {
 	0x001000 | PTE_P | PTE_W, // 虚拟内存 [4, 8KB)，映射为物理内存 [4, 8KB)
   ...
 ```
-仅能完成有限的映射，这只是为了保证内核能支持接下来代码正常执行的临时页表，其中`entry_pgtable - KERNBASE`与`RELOC`作用一样。并且因为将虚拟地址的 [0, 4MB) 映射到了物理地址的 [0, 4MB)，所以在开启地址映射后，进行`jmp`之前，EIP 即便保持在 [0, 4MB) 也能继续执行不会出错
+仅能完成有限的映射，这只是为了保证内核能支持接下来代码正常执行的临时页表，其中`entry_pgtable - KERNBASE`与`RELOC`作用一样。并且因为将虚拟地址的 [0, 4MB) 映射到了物理地址的 [0, 4MB)，所以在开启页表映射后，进行`jmp`之前，EIP 即便保持在 [0, 4MB) 也能继续执行不会出错
 
 ### printf
 kern\console.c 中`cputchar`向终端显示单个字符，其涉及的关键实现如下：
@@ -684,7 +684,7 @@ printfmt(void (*putch)(int, void*), void *putdat, const char *fmt, ...)
 ```
 
 ### 初始化
-kern/entry.S 在开启地址映射后，紧接着执行了如下代码：
+kern/entry.S 在开启页表映射后，紧接着执行了如下代码：
 ```asm
 relocated:
 	movl	$0x0,%ebp

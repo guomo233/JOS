@@ -207,6 +207,36 @@ env_alloc(struct Env **newenv_store, envid_t parent_id)
 	return 0;
 }
 ```
+可见进程 ID 并不是`envs`的下标，通过 inc/env.h 中的`ENVX`可以将进程 ID 转换为在`envs`中的下标，进一步可通过 kern/env.c 下的`envid2env`将进程 ID 给定进程 ID 返回进程描述符，如果给定的是 0 则返回当前进程描述符，比起直接通过`ENVX`从`envs`得到进程描述符，该函数做了一些检查：
+```c
+int
+envid2env(envid_t envid, struct Env **env_store, bool checkperm)
+{
+	struct Env *e;
+
+  // 返回当前进程描述符
+	if (envid == 0) {
+		*env_store = curenv;
+		return 0;
+	}
+
+	// 如果进程描述符未被分配，或输入的 envid 格式不正确
+	e = &envs[ENVX(envid)];
+	if (e->env_status == ENV_FREE || e->env_id != envid) {
+		*env_store = 0;
+		return -E_BAD_ENV;
+	}
+
+	// checkperm 为 1 的情况下，如果该进程不是当前进程或不是当前进程的子进程
+	if (checkperm && e != curenv && e->env_parent_id != curenv->env_id) {
+		*env_store = 0;
+		return -E_BAD_ENV;
+	}
+
+	*env_store = e;
+	return 0;
+}
+```
 
 ### 初始化进程页表
 kern/env.c 中的`env_setup_vm`用于初始化进程页表，将`kern_pgdir`中 UTOP 以上的映射都拷贝进来：
@@ -271,7 +301,7 @@ load_icode(struct Env *e, uint8_t *binary) // binary 指向内核中的用户程
 ```
 
 ### 创建进程
-kern/env.c 中的`env_create`用于创建一个类型为`type`的进程，并装载`binary`处的程序，在 kern/init.c 的`i386_init`中追加了其的调用：
+kern/env.c 中的`env_create`用于创建一个类型为`type`的进程，并装载`binary`处的程序：
 ```c
 void
 env_create(uint8_t *binary, enum EnvType type)
@@ -290,7 +320,7 @@ env_create(uint8_t *binary, enum EnvType type)
 ```
 
 ## 进程执行
-kern/env.c 下的`env_run`用于执行进程，在 kern/init.c 的`i386_init`中追加了其的调用：
+kern/env.c 下的`env_run`用于执行进程：
 ```c
 void
 env_pop_tf(struct Trapframe *tf)
@@ -452,7 +482,6 @@ _alltraps:
 	call trap
 ```
 `trap`函数位于 kern/trap.c 中：
-
 ```c
 void
 trap(struct Trapframe *tf)
@@ -479,7 +508,7 @@ trap(struct Trapframe *tf)
 	// 处理中断
 	trap_dispatch(tf);
 
-	// 恢复进程运行
+	// 恢复进程运行（这样的写法意味着无法处理嵌套中断）
 	assert(curenv && curenv->env_status == ENV_RUNNING);
 	env_run(curenv);
 }

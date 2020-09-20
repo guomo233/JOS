@@ -44,7 +44,7 @@ SECTIONS
 
 	/* The data segment */
 	.data : {
-		*(.data)
+		*(.data .data.*)
 	}
 
 	.bss : {
@@ -57,6 +57,6 @@ SECTIONS
 
 
 	/DISCARD/ : {
-		*(.eh_frame .note.GNU-stack)
+		*(.eh_frame .note.GNU-stack .comment .note)
 	}
 }

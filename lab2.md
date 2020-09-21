@@ -404,6 +404,7 @@ page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 	return 0;
 }
 ```
+
 ## 初始化与检查
 在 Lab 2 的 kern/init.c 的`i386_init`中，新增了对函数`mem_init`的调用，该函数定义于 kern/pmap.c 中，用于对内存管理相关功能做初始化和检查：
 ```c
@@ -467,3 +468,26 @@ mem_init(void)
 	check_page_installed_pgdir();
 }
 ```
+在 lib/entry.S 中为用户定义了：
+```c
+.globl uvpt
+.set uvpt, UVPT
+.globl uvpd
+.set uvpd, (UVPT+(UVPT>>12)*4)
+```
+在 inc/memlayout.h 中将其引入了 C：
+```c
+#if JOS_USER
+extern volatile pte_t uvpt[];
+extern volatile pde_t uvpd[];
+#endif
+```
+这样就可以方便地根据页号得到其页表项：
+```c
+uvpt[PGNUM(va)] = uvpt + ((va >> 12) * 4) // uvpt 元素大小为 4B
+= uvpt + (va >> 10)
+= pgdir[PDX(uvpt)][PTX(va >> 10)][PGOFF(va >> 10)]
+= pgdir[PTX(va >> 10)][PGOFF(va >> 10)]
+= pgdir[PDX(va)][PTX(va)]
+```
+这是专门为用户访问设计的，因为这块区域权限为只读，对内核而言，寻找页表项后可能会对页表项的内容做修改，所以不用这样的方式

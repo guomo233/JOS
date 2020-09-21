@@ -786,7 +786,6 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 }
 ```
 `user_mem_assert`实现与 kern/pmap.c 中：
-
 ```c
 int
 user_mem_check(struct Env *env, const void *va, size_t len, int perm)

@@ -51,6 +51,12 @@ MP 配置表分为表头和扩展表（紧跟表头），表头结构特点如�
 ## HALT
 当处理器空闲时，可以通过`hlt`指令进入 HALT 状态，该状态会停止指令的执行并关闭处理器的部分功能模块，从而降低功耗。但 Local APIC 仍然能接收中断，从而能在接到中断时从 HALT 状态恢复，并继续之前的执行。Idle 进程本质上就是循环执行`hlt`指令
 
+## 用户级页错误处理
+当发生页错误时，其处理方式可以多种多样，如 CoW，为了增加灵活性，可以在用户态触发页错误时将控制权转移给用户态的处理程序。但为了防止页错误来源于用户栈溢出，将存在独立的用户异常栈供此时使用
+
+## CoW
+不应该将用户异常栈标记为 CoW，因为 CoW 的过程中可能会出现异常，而异常必须要用户异常栈来处理
+
 # 代码解析
 
 ## 获取处理器信息
@@ -515,7 +521,7 @@ trap(struct Trapframe *tf)
 {
 	asm volatile("cld" ::: "cc");
 
-  // 如果其他处理器调用过 panic，处理器 HALT
+  // 如果内核调用过 panic，处理器 HALT
 	extern char *panicstr;
 	if (panicstr)
 		asm volatile("hlt");
@@ -580,15 +586,19 @@ sched_yield(void)
 	struct Env *idle;
 	
 	// LAB 4: Your code here.
-	idle = (curenv == NULL) ? envs : curenv ;
+  // 从 idle 处开始往下调度
+	idle = (curenv == NULL) ? envs : (curenv + 1) ;
 	int cur_id = idle - envs ;
-	for (int i = 1; i <= NENV; i++)
+	for (int i = 0; i < NENV; i++)
 	{
-    // 从当前进程的下一个开始轮训
 		int nxt_id = (cur_id + i) % NENV ;
 		if (envs[nxt_id].env_status == ENV_RUNNABLE)
 			env_run (envs + nxt_id) ;
 	}
+	
+  // 除了当前进程，没有其他 RUNNABLE 的进程可供调度
+	if (curenv && curenv->env_status == ENV_RUNNING)
+		env_run (curenv) ;
 
 	// 当前没有任何进程可运行，进入 HALT
 	sched_halt();
@@ -661,8 +671,8 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 }
 ```
 
-### fork
-在 kern/syscall.c 中提供`sys_exofork`系统调用使得用户可以 fork 当前进程：
+### easy fork
+在 kern/syscall.c 中提供`sys_exofork`系统调用使得用户可以创建一个新进程，并从当前进程描述符中简单复制一些信息，但并未实现 fork 的完整功能，这样得到的进程暂时无法运行：
 ```c
 static envid_t
 sys_exofork(void)
@@ -677,6 +687,7 @@ sys_exofork(void)
 		
   // 让子进程拥有同样的上下文
 	child_env->env_tf = curenv->env_tf ;
+  // 因为当前进程还未设置页表，无法执行
 	child_env->env_status = ENV_NOT_RUNNABLE ;
   // 在子进程中，该函数返回 0
 	child_env->env_tf.tf_regs.reg_eax = 0 ;
@@ -724,7 +735,7 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 	switch (syscallno) {
 	// ...
 	case SYS_env_set_status:
-		sys_env_set_status();
+		sys_env_set_status(a1, a2);
 		return 0;
 	// ...
 	}
@@ -773,7 +784,7 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 	switch (syscallno) {
 	// ...
 	case SYS_page_alloc:
-		sys_page_alloc();
+		sys_page_alloc(a1, (void *)a2, a3);
 		return 0;
 	// ...
 	}
@@ -781,7 +792,7 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 ```
 
 ### 共享映射
-在 kern/syscall.c 中提供`sys_page_map`系统调用使得用户可以为使两个进程（当前进程或当前进程的子进程）共享映射：
+在 kern/syscall.c 中提供`sys_page_map`系统调用使得用户可以为两个进程（当前进程或当前进程的子进程）设置共享映射：
 ```c
 static int
 sys_page_map(envid_t srcenvid, void *srcva,
@@ -824,12 +835,13 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 	switch (syscallno) {
 	// ...
 	case SYS_page_map:
-		sys_page_map();
+		sys_page_map(a1, (void *)a2, a3, (void *)a4, a5);
 		return 0;
 	// ...
 	}
 }
 ```
+如果`srcenvid, srcva`和`dstenvid, dstva`相同，则单纯利用该系统调用更新页权限
 
 ### 解除映射
 在 kern/syscall.c 中提供`sys_page_unmap`系统调用使得用户可以将进程（当前进程或当前进程的子进程）指定虚拟内存解除映射：
@@ -858,10 +870,282 @@ syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, 
 	switch (syscallno) {
 	// ...
 	case SYS_page_unmap:
-		sys_page_unmap();
+		sys_page_unmap(a1, (void *)a2);
 		return 0;
 	// ...
 	}
+}
+```
+
+### 设置页错误处理程序
+在 kern/syscall.c 中提供`sys_env_set_pgfault_upcall`系统调用使得用户可以为进程（当前进程或当前进程的子进程）设置用户级页错误处理程序：
+```c
+static int
+sys_env_set_pgfault_upcall(envid_t envid, void *func)
+{
+	// LAB 4: Your code here.
+	// 进程 ID 不合法
+	struct Env *e ;
+	int r ;
+	if ((r = envid2env(envid, &e, 1)) < 0)
+		return r ;
+	
+	e->env_pgfault_upcall = func ;
+	return 0 ;
+}
+
+int32_t
+syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
+{
+	switch (syscallno) {
+	// ...
+	case SYS_env_set_pgfault_upcall:
+		sys_env_set_pgfault_upcall(a1, (void *)a2);
+		return 0;
+	// ...
+	}
+}
+```
+
+## 用户级页错误处理
+
+### 页错误处理
+kern/trap.c 中的`page_fault_handler`修改如下：
+```c
+void
+page_fault_handler(struct Trapframe *tf)
+{
+	// 内核页错误处理...
+  
+	// LAB 4: Your code here.
+  // 如果设置了用户级页错误处理程序
+	if (curenv->env_pgfault_upcall)
+	{
+    // 用户页错误处理函数的参数
+		struct UTrapframe *utf ;
+		if (curenv->env_tf.tf_esp < UXSTACKTOP && curenv->env_tf.tf_esp >= UXSTACKTOP - PGSIZE)
+      // 如果是嵌套页错误，从当前栈顶往下分配 UTrapframe
+			utf = (struct UTrapframe *)(curenv->env_tf.tf_esp - sizeof(struct UTrapframe) - 4) ;
+		else
+      // 否则，直接从原始栈顶往下分配 UTrapframe
+			utf = (struct UTrapframe *)(UXSTACKTOP - sizeof(struct UTrapframe)) ;
+		
+    // 检查对开辟的 UTrapframe 空间的访问权限
+		user_mem_assert(curenv, utf, sizeof(struct UTrapframe), PTE_U | PTE_W) ;
+		
+		utf->utf_fault_va = fault_va ;
+		utf->utf_err = tf->tf_err;
+		utf->utf_regs = tf->tf_regs;
+		utf->utf_eflags = tf->tf_eflags;
+		utf->utf_eip = tf->tf_eip;
+		utf->utf_esp = tf->tf_esp;
+		
+    // kern/trap.c:trap() 中已经将 tf 指向了 curenv->env_tf 了
+		tf->tf_esp = (uintptr_t)utf ;
+		tf->tf_eip = (uintptr_t)curenv->env_pgfault_upcall ;
+		
+    // 将直接执行 curenv->env_pgfault_upcall
+		env_run(curenv) ;
+	}
+
+	// 没有设置用户级页错误处理程序...
+}
+```
+经过上述设置，当开始执行页错误处理程序之前，异常栈布局如下：
+```
+                    <-- UXSTACKTOP
+trap-time esp       -0x30(%esp)
+trap-time eflags
+trap-time eip       -0x28(%esp)
+trap-time eax       start of struct PushRegs
+trap-time ecx
+trap-time edx
+trap-time ebx
+trap-time esp
+trap-time ebp
+trap-time esi
+trap-time edi       0x8(%esp) end of struct PushRegs
+tf_err (error code)
+fault_va            <-- %esp
+```
+
+### 页错误处理程序
+每个用户页错误处理程序都需要包含恢复中断前执行流的逻辑，为避免冗余，可以将这部分抽象出来，形成包装函数，定义于 lib/pfentry.S：
+```asm
+.globl _pgfault_upcall
+_pgfault_upcall:
+	# 调用用户页处理程序
+	pushl %esp    # 将 UTrapframe 起始地址作为 _pgfault_handler 的参数
+	movl _pgfault_handler, %eax
+	call *%eax    # 调用 _pgfault_handler
+	addl $4, %esp # pop 上面压入参数
+	
+	# LAB 4: Your code here.
+	# 将 trap-time eip 放在 trap-time esp 处，以供 ret
+	subl $0x4, 0x30(%esp) # 令 trap-time esp - 4，以保存 trap-time eip
+	movl 0x30(%esp), %ebx # 获取 trap-time esp
+	movl 0x28(%esp), %eax # 获取 trap-time eip
+	movl %eax, (%ebx)     # trap-time eip 放在 trap-time esp 处
+
+	# LAB 4: Your code here.
+	# 将 esp 移到 trap-time PushRegs 处，恢复 r32
+	addl $0x8, %esp
+	popal
+
+	# LAB 4: Your code here.
+	# 将 esp 移到 trap-time eflags 处，恢复 eflags
+	addl $0x4, %esp
+	popfl
+
+	# LAB 4: Your code here.
+	# 恢复 trap-time esp
+	popl %esp
+
+	# LAB 4: Your code here.
+	# 回到中断前的执行流
+	ret
+```
+用户可以调用 lib/pgfault.c 中的`set_pgfault_handler`为当前进程设置页错误处理程序：
+```c
+void (*_pgfault_handler)(struct UTrapframe *utf);
+
+void
+set_pgfault_handler(void (*handler)(struct UTrapframe *utf))
+{
+	int r;
+
+	if (_pgfault_handler == 0) {
+		// LAB 4: Your code here.
+		// 当前进程还未设置用户异常栈
+		if (sys_page_alloc(0, (void *)(UXSTACKTOP - PGSIZE), PTE_W | PTE_U | PTE_P) < 0)
+		{
+			cprintf ("alloc exception stack failed!");
+			return;
+		}
+	}
+
+	// 将实际的页处理函数作为全局变量供包装函数调用
+  // 确保 _pgfault_handler 的设定在 sys_env_set_pgfault_upcall 之前
+  // 以防发生了页错误时，包装函数调用空的处理函数
+	_pgfault_handler = handler;
+  // 将包装函数设为进程的页处理函数
+  sys_env_set_pgfault_upcall(0, _pgfault_upcall);
+}
+```
+`_pgfault_handler`虽然是全局变量，但不同的进程有不同的数据段，所以互不影响
+
+## CoW 映射
+lib/fork.c 中的`duppage`可以让用户将当前进程的页以 CoW 的形式映射到子进程（该函数没有对页号做合法性检查，在调用该函数前应该主动检查）：
+```c
+static int
+duppage(envid_t envid, unsigned pn) // pn 为页号
+{
+	int r;
+
+	// LAB 4: Your code here.
+  // pn 对应的虚拟地址
+	void *va = (void *)(pn * PGSIZE) ;
+	// pn 对应的页表项
+	pte_t pte = uvpt[pn] ;
+  // 如果页可写，或被标为 COW
+	if ((pte & PTE_COW) || (pte & PTE_W))
+	{
+    // 将页面以 COW 形式映射给 envid
+		if ((r = sys_page_map(thisenv->env_id, va, envid, va, PTE_P | PTE_U | PTE_COW)) < 0)
+			return r ;
+		
+    // 将进程自身也标记为 COW
+		if ((r = sys_page_map(thisenv->env_id, va, thisenv->env_id, va, PTE_P | PTE_U | PTE_COW)) < 0)
+			return r ;
+	}
+  // 如果仅可读，不打 COW 标记
+	else if ((r = sys_page_map(thisenv->env_id, va, envid, va, PTE_P | PTE_U)) < 0)
+		return r ;
+	
+	return 0;
+}
+```
+当要对`PTE_COW`页进行写入时，会产生页错误，在 lib/fork.c 中由`pgfault`来处理：
+```c
+static void
+pgfault(struct UTrapframe *utf)
+{
+	void *addr = (void *) utf->utf_fault_va;
+	uint32_t err = utf->utf_err;
+	int r;
+
+	// LAB 4: Your code here.
+  // 检查错误是否由因向 COW 页进行写操作产生
+	if (!(err & FEC_WR) || !(uvpt[PGNUM(addr)] & PTE_COW))
+		panic ("page fault!") ;
+  
+  // 开辟新页
+	if ((r = sys_page_alloc(0, (void *)PFTEMP, PTE_P | PTE_U | PTE_W)) < 0)
+	{
+		cprintf ("page alloc failed, error code: %d", -r) ;
+		return ;
+	}
+  
+	// 将原页内容复制到新页
+	addr = (void *)ROUNDDOWN((uint32_t)addr, PGSIZE) ;
+	memmove ((void *)PFTEMP, addr, PGSIZE) ;
+	
+  // 将原虚拟地址映射到新页处
+	if ((r = sys_page_map(0, (void *)PFTEMP, 0, addr, PTE_P | PTE_U | PTE_W)) < 0)
+	{
+		cprintf ("page map failed, error code: %d", -r) ;
+		return ;
+	}
+
+  // 解除新页之前的映射
+	if ((r = sys_page_unmap(0, (void *)PFTEMP)) < 0)
+	{
+		cprintf ("page unmap failed, error code: %d", -r) ;
+		return ;
+	}
+```
+`duppage`中先将页映射到子进程再将页自身标记为 CoW，是因为如果先将页自身标记为 CoW，那么在映射到子页之前可能会遇到页错误，从而在`pgfault`中分配了新页，并且新页不带 CoW 标记，接着将新页映射给了子进程，造成了一个页在子进程中虽然是 CoW 的但是在父进程中不是 CoW 的，所以不管一个页一开始是不是 CoW 的，一旦将其映射到了子进程，那么之后都需要再次将其标记为 CoW
+
+## fork
+lib/fork.c 下的`fork`实现了完整的 fork 功能：
+```c
+envid_t
+fork(void)
+{
+	// LAB 4: Your code here.
+	// 利用 easy fork 创建一个新进程描述符
+	envid_t child_id = sys_exofork() ;
+	if (child_id < 0)
+		return child_id ;
+	
+	if (child_id == 0)
+	{
+		// 子进程需要让 thisenv 指向自己
+		thisenv = &envs[ENVX(sys_getenvid())];
+		return 0 ;
+	}
+	
+	// 不应该让子进程自己 set_pgfault_handler
+  // 否则子进程调用 set_pgfault_handler 前将没有页错误处理能力
+	// 在拷贝页表前设置好页错误处理程序，子进程也将拥有一样的处理程序
+	set_pgfault_handler (pgfault) ;
+	sys_env_set_pgfault_upcall (child_id, _pgfault_upcall) ;
+	
+  // 拷贝页表（CoW)
+	for (void *va = 0; va < USTACKTOP; va += PGSIZE)
+		if ((uvpd[PDX(va)] & PTE_P) && (uvpt[PGNUM(va)] & (PTE_P | PTE_U)))
+			duppage (child_id, PGNUM(va)) ;
+	
+  // 为子进程分配单独的用户异常栈
+	int r ;
+	if ((r = sys_page_alloc(child_id, (void *)(UXSTACKTOP - PGSIZE), PTE_P | PTE_U | PTE_W)) < 0)
+		return r ;
+	
+  // 将子进程标记为可运行状态
+	if ((r = sys_env_set_status(child_id, ENV_RUNNABLE)) < 0)
+		return r ;
+	
+	return child_id ;
 }
 ```
 

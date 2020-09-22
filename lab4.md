@@ -57,6 +57,9 @@ MP 配置表分为表头和扩展表（紧跟表头），表头结构特点如�
 ## CoW
 不应该将用户异常栈标记为 CoW，因为 CoW 的过程中可能会出现异常，而异常必须要用户异常栈来处理
 
+## 外部中断
+外部中断的处理完成后需要发送 EOI 命令通知 Master PIC（8259A）中断已处理完成，8259A 负责把 ISR 中的位清除，以便以后可以继续接受中断，否则将一直阻塞低级别中断
+
 # 代码解析
 
 ## 获取处理器信息
@@ -605,7 +608,6 @@ sched_yield(void)
 }
 ```
 `sched_halt()` 实现与 kern/sched.c：
-
 ```c
 void
 sched_halt(void)
@@ -638,12 +640,102 @@ sched_halt(void)
 		"movl %0, %%esp\n"
 		"pushl $0\n"
 		"pushl $0\n"
-		// Uncomment the following line after completing exercise 13
-		//"sti\n"
+		// 确保中断开启
+		"sti\n"
 		"1:\n"
 		"hlt\n"
 		"jmp 1b\n"
 	: : "a" (thiscpu->cpu_ts.ts_esp0));
+}
+```
+
+## 时钟中断
+在 kern/trapentry.S 添加外部中断处理程序：
+```c
+TRAPHANDLER_NOEC(irq_handler0, 32);
+TRAPHANDLER_NOEC(irq_handler1, 33);
+TRAPHANDLER_NOEC(irq_handler2, 34);
+TRAPHANDLER_NOEC(irq_handler3, 35);
+TRAPHANDLER_NOEC(irq_handler4, 36);
+TRAPHANDLER_NOEC(irq_handler5, 37);
+TRAPHANDLER_NOEC(irq_handler6, 38);
+TRAPHANDLER_NOEC(irq_handler7, 39);
+TRAPHANDLER_NOEC(irq_handler8, 40);
+TRAPHANDLER_NOEC(irq_handler9, 41);
+TRAPHANDLER_NOEC(irq_handler10, 42);
+TRAPHANDLER_NOEC(irq_handler11, 43);
+TRAPHANDLER_NOEC(irq_handler12, 44);
+TRAPHANDLER_NOEC(irq_handler13, 45);
+TRAPHANDLER_NOEC(irq_handler14, 46);
+TRAPHANDLER_NOEC(irq_handler15, 47);
+```
+在 kern/trap.c 的`trap_init`中将外部中断处理程序载入中断向量表，并在`trap_dispatch`中添加对时钟中断的处理：
+```c
+void
+trap_init(void)
+{
+	// ...
+
+	void irq_handler0();
+	SETGATE(idt[IRQ_OFFSET+0], 0, GD_KT, irq_handler0, 3);
+	void irq_handler1();
+	SETGATE(idt[IRQ_OFFSET+1], 0, GD_KT, irq_handler1, 3);
+	void irq_handler2();
+	SETGATE(idt[IRQ_OFFSET+2], 0, GD_KT, irq_handler2, 3);
+	void irq_handler3();
+	SETGATE(idt[IRQ_OFFSET+3], 0, GD_KT, irq_handler3, 3);
+	void irq_handler4();
+	SETGATE(idt[IRQ_OFFSET+4], 0, GD_KT, irq_handler4, 3);
+	void irq_handler5();
+	SETGATE(idt[IRQ_OFFSET+5], 0, GD_KT, irq_handler5, 3);
+	void irq_handler6();
+	SETGATE(idt[IRQ_OFFSET+6], 0, GD_KT, irq_handler6, 3);
+	void irq_handler7();
+	SETGATE(idt[IRQ_OFFSET+7], 0, GD_KT, irq_handler7, 3);
+	void irq_handler8();
+	SETGATE(idt[IRQ_OFFSET+8], 0, GD_KT, irq_handler8, 3);
+	void irq_handler9();
+	SETGATE(idt[IRQ_OFFSET+9], 0, GD_KT, irq_handler9, 3);
+	void irq_handler10();
+	SETGATE(idt[IRQ_OFFSET+10], 0, GD_KT, irq_handler10, 3);
+	void irq_handler11();
+	SETGATE(idt[IRQ_OFFSET+11], 0, GD_KT, irq_handler11, 3);
+	void irq_handler12();
+	SETGATE(idt[IRQ_OFFSET+12], 0, GD_KT, irq_handler12, 3);
+	void irq_handler13();
+	SETGATE(idt[IRQ_OFFSET+13], 0, GD_KT, irq_handler13, 3);
+	void irq_handler14();
+	SETGATE(idt[IRQ_OFFSET+14], 0, GD_KT, irq_handler14, 3);
+	void irq_handler15();
+	SETGATE(idt[IRQ_OFFSET+15], 0, GD_KT, irq_handler15, 3);
+
+	// ...
+}
+
+static void
+trap_dispatch(struct Trapframe *tf)
+{
+	switch (tf->tf_trapno)
+	{
+	// ...
+	case IRQ_OFFSET + IRQ_TIMER:
+		lapic_eoi() ;
+		sched_yield() ;
+	}
+
+	// ...
+}
+```
+在 kern/env.c 中确保每个进程都能接收中断：
+```c
+int
+env_alloc(struct Env **newenv_store, envid_t parent_id)
+{
+	// ...
+	// LAB 4: Your code here.
+	e->env_tf.tf_eflags |= FL_IF ;
+
+	// ...
 }
 ```
 
@@ -1149,7 +1241,154 @@ fork(void)
 }
 ```
 
+## IPC
+
+### 接收消息
+在 kern/syscall.c 中提供`sys_ipc_recv`系统调用使得用户可以接收来自任意进程的消息，在等待消息到来前进程将阻塞，当`dstva < UTOP`时表示愿意接受对方将一个页面共享映射到`dstva`处：
+```c
+static int
+sys_ipc_recv(void *dstva)
+{
+	// LAB 4: Your code here.
+	// 愿意共享映射，但 dstva 没有页面对齐
+	if ((uint32_t)dstva < UTOP && (uint32_t)dstva % PGSIZE)
+		return -E_INVAL ;
+	
+	curenv->env_ipc_recving = true;
+	curenv->env_ipc_dstva = dstva;
+	curenv->env_status = ENV_NOT_RUNNABLE; // 阻塞进程，并重新调度
+	sched_yield();
+	return 0;
+}
+
+int32_t
+syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
+{
+	switch (syscallno) {
+	// ...
+	case SYS_ipc_recv:
+		return sys_ipc_recv((void *)a1);
+	// ...
+}
+```
+在 lib/ipc.c 中提供包装函数`ipc_recv`供用户能更方便的接收消息：
+```c
+int32_t
+ipc_recv(envid_t *from_env_store, void *pg, int *perm_store)
+{
+	// LAB 4: Your code here.
+	// pg 为 NULL 表示不接受共享映射
+	if (!pg)
+		pg = (void *)UTOP ;
+	
+	// 接收消息
+	int r = sys_ipc_recv(pg) ;
+	
+	// 存储消息发送方
+	if (from_env_store)
+		*from_env_store = r < 0 ? 0 : thisenv->env_ipc_from ;
+	
+	// 存储新的页面权限
+	if (perm_store)
+		*perm_store = r < 0 ? 0 : thisenv->env_ipc_perm ;
+	
+	// 返回消息
+	return r < 0 ? r : thisenv->env_ipc_value ;
+}
+
+int32_t
+syscall(uint32_t syscallno, uint32_t a1, uint32_t a2, uint32_t a3, uint32_t a4, uint32_t a5)
+{
+	switch (syscallno) {
+	// ...
+	case SYS_ipc_try_send:
+		return sys_ipc_try_send(a1, a2, (void *)a3, a4);
+	// ...
+	}
+}
+```
+
+### 发送消息
+在 kern/syscall.c 中提供`sys_ipc_try_send`系统调用使得用户可以给任意进程发送消息，当`srcva < UTOP`时将一个页面共享映射到对方进程：
+```c
+static int
+sys_ipc_try_send(envid_t envid, uint32_t value, void *srcva, unsigned perm)
+{
+	// LAB 4: Your code here.
+	// 进程 ID 不合法
+	struct Env *dstenv ;
+	if (envid2env(envid, &dstenv, 0) < 0)
+		return -E_BAD_ENV;
+	
+	// 对方还未准备接收
+	if (!dstenv->env_ipc_recving)
+		return -E_IPC_NOT_RECV;
+	
+	// 共享映射
+	if ((uint32_t)srcva < UTOP && (uint32_t)dstenv->env_ipc_dstva < UTOP)
+	{
+		// 没有页面对齐
+		if ((uint32_t)srcva % PGSIZE)
+			return -E_INVAL;
+		
+		// 获取 srcva 处的物理页
+		pte_t *pte ;
+		struct PageInfo *pg = page_lookup(curenv->env_pgdir, srcva, &pte) ;
+		if (!pg)
+			return -E_INVAL;
+		
+		// 检查页权限设置是否合理
+		if ((perm & ~PTE_SYSCALL) || !(perm & PTE_U) || ((perm & PTE_W) && !(*pte & PTE_W)))
+			return -E_INVAL;
+		
+		// 将对方的虚拟地址映射到 srcva 处的物理页
+		if (page_insert(dstenv->env_pgdir, pg, dstenv->env_ipc_dstva, perm) < 0)
+			return -E_NO_MEM;
+		
+		// 通知对方新的页权限
+		dstenv->env_ipc_perm = perm;
+	}
+	
+	dstenv->env_ipc_recving = false;
+	dstenv->env_ipc_from = curenv->env_id; // 发送方
+	dstenv->env_ipc_value = value;         // 消息
+	dstenv->env_tf.tf_regs.reg_eax = 0;    // 让对方能返回 0 以表示接收成功
+	dstenv->env_status = ENV_RUNNABLE;     // 让对方从阻塞中恢复（最后设置）
+	
+	return 0 ;
+}
+```
+在 lib/ipc.c 中提供包装函数`ipc_send`供用户能更方便的发送消息：
+```c
+void
+ipc_send(envid_t to_env, uint32_t val, void *pg, int perm)
+{
+	// LAB 4: Your code here.
+	// pg 为 NULL 表示不共享映射
+	if (!pg)
+		pg = (void *)UTOP ;
+	
+	int r = -1 ;
+	while (r != 0)
+	{
+		// 不断尝试给对方发消息
+		r = sys_ipc_try_send(to_env, val, pg, perm) ;
+		if (r == -E_IPC_NOT_RECV) // 对方还未准备接收，则等一个调度再发
+			sys_yield() ;
+		else if (r < 0) // 其他错误
+			panic ("ipc_send error: %d", r) ;
+	}
+}
+```
+
 # Questions
+
+## Questions 1
+> Compare kern/mpentry.S side by side with boot/boot.S. Bearing in mind that kern/mpentry.S is compiled and linked to run above KERNBASE just like everything else in the kernel, what is the purpose of macro MPBOOTPHYS? Why is it necessary in kern/mpentry.S but not in boot/boot.S? In other words, what could go wrong if it were omitted in kern/mpentry.S?
+
+kern/mpentry.S 一开始被链接到了高地址，只是 BSP 将其通过`memmove`移动到了低地址，其代码段原封不动被移动了，所以代码中所涉及的跳转语句依然会尝试往高地址跳转，但 APs 初始工作在实模式下，为了能让 APs 访问到低地址，需要用`MPBOOTPHYS`来将地址偏移到低地址
+
+## Question 2
 > It seems that using the big kernel lock guarantees that only one CPU can run the kernel code at a time. Why do we still need separate kernel stacks for each CPU? Describe a scenario in which using a shared kernel stack will go wrong, even with the protection of the big kernel lock.
 
 当一个处理器刚陷入内核时要向内核栈中压入一些中断信息，此时没有加锁，为了防止此时另一个处理器同时陷入，所以每个处理器的内核栈需要独立

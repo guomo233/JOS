@@ -79,7 +79,7 @@ trap_init(void)
 	void nmi_handler();
 	SETGATE(idt[T_NMI], 0, GD_KT, nmi_handler, 0);
 	void brktp_handler();
-	SETGATE(idt[T_BRKPT], 1, GD_KT, brktp_handler, 3);
+	SETGATE(idt[T_BRKPT], 0, GD_KT, brktp_handler, 3);
 	void oflow_handler();
 	SETGATE(idt[T_OFLOW], 0, GD_KT, oflow_handler, 0);
 	void bound_handler();
@@ -109,9 +109,42 @@ trap_init(void)
 	void simderr_handler();
 	SETGATE(idt[T_SIMDERR], 0, GD_KT, simderr_handler, 0);
 	void syscall_handler();
-	SETGATE(idt[T_SYSCALL], 1, GD_KT, syscall_handler, 3);
+	SETGATE(idt[T_SYSCALL], 0, GD_KT, syscall_handler, 3);
 	void default_handler();
 	SETGATE(idt[T_DEFAULT], 0, GD_KT, default_handler, 0);
+
+	void irq_handler0();
+	SETGATE(idt[IRQ_OFFSET+0], 0, GD_KT, irq_handler0, 3);
+	void irq_handler1();
+	SETGATE(idt[IRQ_OFFSET+1], 0, GD_KT, irq_handler1, 3);
+	void irq_handler2();
+	SETGATE(idt[IRQ_OFFSET+2], 0, GD_KT, irq_handler2, 3);
+	void irq_handler3();
+	SETGATE(idt[IRQ_OFFSET+3], 0, GD_KT, irq_handler3, 3);
+	void irq_handler4();
+	SETGATE(idt[IRQ_OFFSET+4], 0, GD_KT, irq_handler4, 3);
+	void irq_handler5();
+	SETGATE(idt[IRQ_OFFSET+5], 0, GD_KT, irq_handler5, 3);
+	void irq_handler6();
+	SETGATE(idt[IRQ_OFFSET+6], 0, GD_KT, irq_handler6, 3);
+	void irq_handler7();
+	SETGATE(idt[IRQ_OFFSET+7], 0, GD_KT, irq_handler7, 3);
+	void irq_handler8();
+	SETGATE(idt[IRQ_OFFSET+8], 0, GD_KT, irq_handler8, 3);
+	void irq_handler9();
+	SETGATE(idt[IRQ_OFFSET+9], 0, GD_KT, irq_handler9, 3);
+	void irq_handler10();
+	SETGATE(idt[IRQ_OFFSET+10], 0, GD_KT, irq_handler10, 3);
+	void irq_handler11();
+	SETGATE(idt[IRQ_OFFSET+11], 0, GD_KT, irq_handler11, 3);
+	void irq_handler12();
+	SETGATE(idt[IRQ_OFFSET+12], 0, GD_KT, irq_handler12, 3);
+	void irq_handler13();
+	SETGATE(idt[IRQ_OFFSET+13], 0, GD_KT, irq_handler13, 3);
+	void irq_handler14();
+	SETGATE(idt[IRQ_OFFSET+14], 0, GD_KT, irq_handler14, 3);
+	void irq_handler15();
+	SETGATE(idt[IRQ_OFFSET+15], 0, GD_KT, irq_handler15, 3);
 
 	// Per-CPU setup 
 	trap_init_percpu();
@@ -231,16 +264,19 @@ trap_dispatch(struct Trapframe *tf)
 			tf->tf_regs.reg_ecx, tf->tf_regs.reg_ebx,
 			tf->tf_regs.reg_edi, tf->tf_regs.reg_esi) ;
 		return ;
+	case IRQ_OFFSET + IRQ_TIMER:
+		lapic_eoi() ;
+		sched_yield() ;
 	}
 
 	// Handle spurious interrupts
 	// The hardware sometimes raises these because of noise on the
 	// IRQ line or other reasons. We don't care.
-	if (tf->tf_trapno == IRQ_OFFSET + IRQ_SPURIOUS) {
-		cprintf("Spurious interrupt on irq 7\n");
-		print_trapframe(tf);
-		return;
-	}
+	// if (tf->tf_trapno == IRQ_OFFSET + IRQ_SPURIOUS) {
+	// 	cprintf("Spurious interrupt on irq 7\n");
+	//	print_trapframe(tf);
+	//	return;
+	// }
 
 	// Handle clock interrupts. Don't forget to acknowledge the
 	// interrupt using lapic_eoi() before calling the scheduler!

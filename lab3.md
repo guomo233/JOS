@@ -207,7 +207,7 @@ env_alloc(struct Env **newenv_store, envid_t parent_id)
 	return 0;
 }
 ```
-可见进程 ID 并不是`envs`的下标，通过 inc/env.h 中的`ENVX`可以将进程 ID 转换为在`envs`中的下标，进一步可通过 kern/env.c 下的`envid2env`将进程 ID 给定进程 ID 返回进程描述符，如果给定的是 0 则返回当前进程描述符，比起直接通过`ENVX`从`envs`得到进程描述符，该函数做了一些检查：
+可见进程 ID 并不是`envs`的下标，这样可以防止进程描述符被不同进程复用时（一个进程死亡后，将进程描述符分配给新进程）能有不同的进程 ID，其中`e->env_id + (1 << ENVGENSHIFT)`即增加`e->env_id`的高位，这样假设进程 ID 初始为 0x1001，则下一次就是 0x2001。通过 inc/env.h 中的`ENVX`可以将进程 ID 转换为在`envs`中的下标，进一步可通过 kern/env.c 下的`envid2env`将进程 ID 给定进程 ID 返回进程描述符，如果给定的是 0 则返回当前进程描述符，比起直接通过`ENVX`从`envs`得到进程描述符，该函数做了一些检查：
 ```c
 int
 envid2env(envid_t envid, struct Env **env_store, bool checkperm)

@@ -1046,8 +1046,6 @@ runcmd(char *buf, struct Trapframe *tf)
 
 
 # Exercises
-对于在[代码解析](#代码解析)部分已经有阐述或对加深理解意义不大的 Exercise 不做赘述
-
 ## Exercise 3
 > What is the last instruction of the boot loader executed, and what is the first instruction of the kernel it just loaded?
 

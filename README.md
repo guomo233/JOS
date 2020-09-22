@@ -27,13 +27,27 @@ ln -s /usr/local/Cellar/i386-jos-elf-binutils/2.21.1/bin/* /usr/local/bin/
 `make`编译出内核映像 obj/kern/kernel.img
 
 ## QEMU
-为了让 JOS 运行于软件仿真的 x86 上，需要安装 QEMU
+为了让 JOS 运行于软件仿真的 x86 上，需要安装 QEMU，最好安装 MIT 魔改的 QEMU，如果安装官方的 QEMU，Lab 4 中 primes 测试可能 timeout（官方 QEMU 对多处理器的支持可能不太好）：
 ```shell
-brew install qemu
+git clone https://github.com/mit-pdos/6.828-qemu.git qemu
+
+./configure --disable-kvm --disable-werror --disable-sdl --prefix=[install_path] --target-list="i386-softmmu x86_64-softmmu"
+
+make && make install
 ```
-`make qemu`会自动将内核映像加载到 QEMU
+如果安装过程中发现缺少依赖，安装依赖：
+```shell
+brew install $(brew deps qemu)
+```
+修改 conf/env.mk：
+
+```makefile
+QEMU='install_path/bin/qemu-system-i386'
+```
+`make qemu`会自动将内核映像加载到 QEMU，`make qemu-nox CPUS=4`可以模拟多处理器
 
 # Labs
+对于在代码解析部分已经有阐述或对加深理解意义不大的 Question 不做赘述
 * [lab1](lab1.md)
 * [lab2](lab2.md)
 * [lab3](lab3.md)

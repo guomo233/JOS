@@ -1,3 +1,6 @@
+# 目录
+[toc]
+
 # 理论补充
 
 ## CMOS
@@ -10,8 +13,8 @@ CMOS 是用于保存 BIOS 设置的 RAM，由独立电池供电
 
 ![物理内存布局](images/物理内存布局.png)
 
-* 0x00000~0xA0000：basemem，其中 ELF 头、Boot Loader 在后期用不上了，可以被覆盖；
-* 0xA0000~0x100000：IO Hole，不可用；
+* 0x00000～0xA0000：basemem，其中 ELF 头、Boot Loader 在后期用不上了，可以被覆盖；
+* 0xA0000～0x100000：IO Hole，不可用；
 * 0x100000 以上：extmem，通过`objdump -h obj/kern/kernel`可以发现 BSS 是内核所占的最后一段，所以 BSS 后的内存是未使用的；
 
 ### 虚拟内存
@@ -88,8 +91,8 @@ i386_detect_memory(void)
 
 	// 从 CMOS 中读取物理内存信息（单位为 KB）
 	basemem = nvram_read(NVRAM_BASELO);
-	extmem = nvram_read(NVRAM_EXTLO);          // 1~16MB
-	ext16mem = nvram_read(NVRAM_EXT16LO) * 64; // 16MB~4GB
+	extmem = nvram_read(NVRAM_EXTLO);          // 1～16MB
+	ext16mem = nvram_read(NVRAM_EXT16LO) * 64; // 16MB～4GB
 
 	// 计算总数
 	if (ext16mem)    // 内存大于 16MB

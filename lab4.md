@@ -1,3 +1,6 @@
+# 目录
+[toc]
+
 # 理论补充
 
 ## SMP
@@ -15,7 +18,7 @@
 * 处理器之间可以通过 Local APIC 向总线发送（或接收）IPI（InterProcessor Interrupt）来通信，如最开始 BSP 创建 MP 配置表（Configuration Table），并将自己登记为 0 号，接着会向 APs 发送一个 INIT IPI 让 APs 到近似复位的状态（warm reset），然后发送 SIPI（Start-up IPI）激活 APs 也去其中登记
 
 ## BIOS 数据区
-* BDA（BIOS Data Area）：0x400~0x4FF，包含有关系统环境的信息，例如：
+* BDA（BIOS Data Area）：0x400～0x4FF，包含有关系统环境的信息，例如：
 	* 偏移 0xE 和 0xF 分别保存着 EBDA 的段地址低 8bit 和高 8bit，EBDA 的物理地址即段地址左移 4；
 	* 偏移 0x13 和 0x14 分别保存着 basemem 大小（单位为 KB）的低 8bit 和高 8bit；
 * EBDA（Extended BIOS Data Area）：首 1KB 中可能包含 MP Floating Pointer Structure；
@@ -27,7 +30,7 @@ MP 配置表（Configuration Table）中记录了所有处理器的信息，最�
 MP Floating Pointer Structure 通常位于内存的如下三个位置，操作系统通常按如下顺序搜索：
 1. 在 EBDA（Extended BIOS Data Area）的首 1KB 寻找；
 2. 如果 EBDA 未定义，则在 basemem 的最后 1KB 寻找；
-3. 如果没找到，则在 BIOS ROM（0xF0000~0xFFFFF）寻找；
+3. 如果没找到，则在 BIOS ROM（0xF0000～0xFFFFF）寻找；
 
 MP Floating Pointer Structure 的结构特点：
 1. 开头 4 个字节为`__MP__`；

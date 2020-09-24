@@ -1,3 +1,6 @@
+# 目录
+[toc]
+
 # 文件系统设计
 
 * JOS 作为一个微内核操作系统，将文件系统实现在了用户空间，即有一个用户进程专门提供文件系统服务，其他进程通过 IPC 与其通信，具体如下；
@@ -2161,39 +2164,5 @@ trap_dispatch(struct Trapframe *tf)
 		serial_intr() ; // 处理串口输入
 		return ;
 	}
-}
-```
-
-## 。。。
-fs/fsformat.c 中的`main`即文件系统服务的启动入口，参数应该为`fsformat fs.img [NBLOCKS] files`，其中`NBLOCKS`为：
-```c
-int
-main(int argc, char **argv)
-{
-	int i;
-	char *s;
-	struct Dir root;
-
-  // 块大小要是文件元数据结构的整数倍
-	assert(BLKSIZE % sizeof(struct File) == 0);
-
-	// 参数格式不正确
-	if (argc < 3)
-		usage(); // 打印提示参数正确格式，并 exit
-
-  // 提取出参数中的 NBLOCKS
-	nblocks = strtol(argv[2], &s, 0);
-	if (*s || s == argv[2] || nblocks < 2 || nblocks > 1024)
-		usage();
-
-	opendisk(argv[1]);
-
-	startdir(&super->s_root, &root);
-	for (i = 3; i < argc; i++)
-		writefile(&root, argv[i]);
-	finishdir(&root);
-
-	finishdisk();
-	return 0;
 }
 ```

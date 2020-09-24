@@ -1,3 +1,6 @@
+# 目录
+[toc]
+
 # 理论补充
 
 ## 端口操作
@@ -28,7 +31,7 @@ Intel 8086/8088 采用段加偏移的方式得到的最高地址应该是 FFFF:F
 将 CR0 寄存器的 PE 位（最低位）设置为 1 标志着正式进入保护模式
 
 ## MBR 载入地址
-BIOS 会将 MBR 加载在 0x7C00 处，是由于早期的 8088，当时 IBM PC 5150 搭配了该CPU，使用 86-DOS 操作系统，需要的内存最少是 32KB（0x0000~0x7FFF），由于 0x0000~0x03FF 用于存储中断向量表，所以还剩 0x0400~0x7FFF，MBR 需要 512B 并且由于 Boot Loader 也会产生数据所以还要留出 512B 保存数据，所以 0x7FFF - 512 - 512 + 1 = 0x7C00
+BIOS 会将 MBR 加载在 0x7C00 处，是由于早期的 8088，当时 IBM PC 5150 搭配了该CPU，使用 86-DOS 操作系统，需要的内存最少是 32KB（0x0000～0x7FFF），由于 0x0000～0x03FF 用于存储中断向量表，所以还剩 0x0400～0x7FFF，MBR 需要 512B 并且由于 Boot Loader 也会产生数据所以还要留出 512B 保存数据，所以 0x7FFF - 512 - 512 + 1 = 0x7C00
 
 ## GDT 与 LDT
 
@@ -51,7 +54,7 @@ LDT 为局部描述符表（Local Descriptor Table），与 GDT 不同，系统�
 MMU 属于体系结构层次，对操作系统而言，只需要将页目录地址载入 CR3 寄存器即可
 
 ## 硬盘 LBA 寻址
-CHS（Cylinders-Heads-Sectors）即以柱面、磁头、扇区为单位寻址，而逻辑区块地址（Logical Block Address）以扇区号为单位寻址，其涉及端口为 0x1F0~0x1F7
+CHS（Cylinders-Heads-Sectors）即以柱面、磁头、扇区为单位寻址，而逻辑区块地址（Logical Block Address）以扇区号为单位寻址，其涉及端口为 0x1F0～0x1F7
 
 ## CPU 等待
 0x84 端口是 Extra Page Register，读这个寄存器的指令实际相当于一个 NOOP，可以通过该操作实现底层的 CPU 等待
@@ -1085,7 +1088,7 @@ cprintf("x=%d y=%d", 3);
 ```asm
 mov    $0xf0118000,%eax
 ```
-而栈大小`KSTKSIZE`定义于 inc/memlayout.h，为 8 * 4096B ，所以栈的内存布局为 0xf0110000~0xf0118000
+而栈大小`KSTKSIZE`定义于 inc/memlayout.h，为 8 * 4096B ，所以栈的内存布局为 0xf0110000～0xf0118000
 
 ## Exercise 11
 > Exercise 11. Implement the backtrace function as specified above. Use the same format as in the example, since otherwise the grading script will be confused. When you think you have it working right, run make grade to see if its output conforms to what our grading script expects, and fix it if it doesn't. After you have handed in your Lab 1 code, you are welcome to change the output format of the backtrace function any way you like.

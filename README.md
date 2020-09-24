@@ -5,7 +5,7 @@
 ```shell
 git clone https://pdos.csail.mit.edu/6.828/2018/jos.git lab
 ```
-这样得到的仅仅是 Lab1 的相关文件，待 Lab1 做完后可以将 Lab2 拉下来：
+这样得到的仅仅是 Lab1 的相关文件，待 Lab1 做完后再将 Lab2 拉下来：
 ```shell
 git checkout -b lab2 origin/lab2
 git merge lab1
@@ -47,8 +47,10 @@ QEMU='install_path/bin/qemu-system-i386'
 `make qemu`会自动将内核映像加载到 QEMU，`make qemu-nox CPUS=4`可以模拟多处理器
 
 # Labs
-对于在代码解析部分已经有阐述或对加深理解意义不大的 Question 不做赘述
-* [lab1](lab1.md)
-* [lab2](lab2.md)
-* [lab3](lab3.md)
-* [lab4](lab4.md)
+旨在以 Lab 为线索探索整个 JOS 实现，会在代码解析部分将不属于 Exercise 的其余代码也尽可能做详细剖析，对于在代码解析部分已经有阐述或对加深理解意义不大的 Question 不做赘述
+* [Lab1](lab1.md)
+* [Lab2](lab2.md)
+* [Lab3](lab3.md)
+* [Lab4](lab4.md)
+* [Lab5](lab5.md)
+* lab6：~~鸽~~ TODO

@@ -17,4 +17,4 @@ V = @
 # If the makefile cannot find your QEMU binary, uncomment the
 # following line and set it to the full path to QEMU.
 #
-# QEMU=
+QEMU='/Users/tisrop-gm/Desktop/qemu/bin/qemu-system-i386'

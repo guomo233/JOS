@@ -80,15 +80,20 @@ duppage(envid_t envid, unsigned pn)
 	//panic("duppage not implemented");
 	void *va = (void *)(pn * PGSIZE) ;
 	pte_t pte = uvpt[pn] ;
-	if ((pte & PTE_COW) || (pte & PTE_W))
+	if ((pte & PTE_COW) || ((pte & PTE_W) && !(pte & PTE_SHARE)))
 	{
-		if ((r = sys_page_map(thisenv->env_id, va, envid, va, PTE_P | PTE_U | PTE_COW)) < 0)
+		if ((r = sys_page_map(0, va, envid, va, PTE_P | PTE_U | PTE_COW)) < 0)
 			return r ;
 			
-		if ((r = sys_page_map(thisenv->env_id, va, thisenv->env_id, va, PTE_P | PTE_U | PTE_COW)) < 0)
+		if ((r = sys_page_map(0, va, thisenv->env_id, va, PTE_P | PTE_U | PTE_COW)) < 0)
 			return r ;
 	}
-	else if ((r = sys_page_map(thisenv->env_id, va, envid, va, PTE_P | PTE_U)) < 0)
+	else if (pte & PTE_SHARE)
+	{
+		if ((r = sys_page_map(0, va, envid, va, pte & PTE_SYSCALL)) < 0)
+			return r ;
+	}
+	else if ((r = sys_page_map(0, va, envid, va, PTE_P | PTE_U)) < 0)
 		return r ;
 	
 	return 0;
@@ -130,7 +135,7 @@ fork(void)
 	sys_env_set_pgfault_upcall (child_id, _pgfault_upcall) ;
 	
 	for (uint32_t va = 0; va < USTACKTOP; va += PGSIZE)
-		if ((uvpd[PDX(va)] & PTE_P) && (uvpt[PGNUM(va)] & (PTE_P | PTE_U)))
+		if ((uvpd[PDX(va)] & PTE_P) && (uvpt[PGNUM(va)] & PTE_P))
 			duppage (child_id, PGNUM(va)) ;
 	
 	int r ;

@@ -1143,15 +1143,15 @@ duppage(envid_t envid, unsigned pn) // pn 为页号
 	if ((pte & PTE_COW) || (pte & PTE_W))
 	{
     // 将页面以 COW 形式映射给 envid
-		if ((r = sys_page_map(thisenv->env_id, va, envid, va, PTE_P | PTE_U | PTE_COW)) < 0)
+		if ((r = sys_page_map(0, va, envid, va, PTE_P | PTE_U | PTE_COW)) < 0)
 			return r ;
 		
     // 将进程自身也标记为 COW
-		if ((r = sys_page_map(thisenv->env_id, va, thisenv->env_id, va, PTE_P | PTE_U | PTE_COW)) < 0)
+		if ((r = sys_page_map(0, va, thisenv->env_id, va, PTE_P | PTE_U | PTE_COW)) < 0)
 			return r ;
 	}
   // 如果仅可读，不打 COW 标记
-	else if ((r = sys_page_map(thisenv->env_id, va, envid, va, PTE_P | PTE_U)) < 0)
+	else if ((r = sys_page_map(0, va, envid, va, PTE_P | PTE_U)) < 0)
 		return r ;
 	
 	return 0;
@@ -1225,7 +1225,7 @@ fork(void)
 	
   // 拷贝页表（CoW)
 	for (void *va = 0; va < USTACKTOP; va += PGSIZE)
-		if ((uvpd[PDX(va)] & PTE_P) && (uvpt[PGNUM(va)] & (PTE_P | PTE_U)))
+		if ((uvpd[PDX(va)] & PTE_P) && (uvpt[PGNUM(va)] & PTE_P))
 			duppage (child_id, PGNUM(va)) ;
 	
   // 为子进程分配单独的用户异常栈
@@ -1392,3 +1392,26 @@ kern/mpentry.S 一开始被链接到了高地址，只是 BSP 将其通过`memmo
 > It seems that using the big kernel lock guarantees that only one CPU can run the kernel code at a time. Why do we still need separate kernel stacks for each CPU? Describe a scenario in which using a shared kernel stack will go wrong, even with the protection of the big kernel lock.
 
 当一个处理器刚陷入内核时要向内核栈中压入一些中断信息，此时没有加锁，为了防止此时另一个处理器同时陷入，所以每个处理器的内核栈需要独立
+
+# Miracle
+记一个神奇的 Bug / Feature，将 lib/fork.c 中`fork`的这一句：
+```c
+// ...
+int r ;
+	if ((r = sys_page_alloc(child_id, (void *)(UXSTACKTOP - PGSIZE), PTE_P | PTE_U | PTE_W)) < 0)
+		return r ;
+```
+挪动到如下位置，并将`return`改成`panic`：
+```c
+// ...
+set_pgfault_handler (pgfault) ;
+int r ;
+	if ((r = sys_page_alloc(child_id, (void *)(UXSTACKTOP - PGSIZE), PTE_P | PTE_U | PTE_W)) < 0)
+		panic("any str\n") ;
+extern void _pgfault_upcall(void);
+// ...
+```
+Part C 中 primes 的测试性能将会提高一倍！？
+```
+primes: OK (10.0s) -> primes: OK (4.9s) 
+```

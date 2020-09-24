@@ -367,7 +367,7 @@ pte_t entry_pgtable[NPTENTRIES] = {
 ```
 仅能完成有限的映射，这只是为了保证内核能支持接下来代码正常执行的临时页表，其中`entry_pgtable - KERNBASE`与`RELOC`作用一样。并且因为将虚拟地址的 [0, 4MB) 映射到了物理地址的 [0, 4MB)，所以在开启页表映射后，进行`jmp`之前，EIP 即便保持在 [0, 4MB) 也能继续执行不会出错
 
-### printf
+### cprintf
 kern\console.c 中`cputchar`向终端显示单个字符，其涉及的关键实现如下：
 ```c
 static uint16_t *crt_buf; // 显示缓冲区
@@ -961,8 +961,8 @@ debuginfo_eip(uintptr_t addr, struct Eipdebuginfo *info)
 }
 ```
 
-### 命令行
-kern/minitor.c 中的`monitor`提供了命令行：
+### 内核命令行
+kern/minitor.c 中的`monitor`提供了内核命令行：
 ```c
 void
 monitor(struct Trapframe *tf)

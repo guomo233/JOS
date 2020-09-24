@@ -53,7 +53,7 @@ struct Env {
 	struct Env *env_link;		  // env_free_list 的 next
 	envid_t env_id;			      // 进程 ID
 	envid_t env_parent_id;		// 父进程 ID
-	enum EnvType env_type;		// 进程类型，只有 ENV_TYPE_USER
+	enum EnvType env_type;		// 进程类型，一般为 ENV_TYPE_USER
 	unsigned env_status;		  // 进程状态，可以为上述 enum
 	uint32_t env_runs;		    // 进程被调度的次数
 	pde_t *env_pgdir;		      // 进程页目录

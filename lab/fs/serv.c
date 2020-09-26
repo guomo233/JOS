@@ -218,8 +218,9 @@ serve_read(envid_t envid, union Fsipc *ipc)
 	int r ;
 	if ((r = openfile_lookup(envid, req->req_fileid, &o)) < 0)
 		return r ;
-		
-	if ((r = file_read(o->o_file, ret->ret_buf, req->req_n, o->o_fd->fd_offset)) < 0)
+	
+	int n = MIN(sizeof(ret->ret_buf), req->req_n) ;
+	if ((r = file_read(o->o_file, ret->ret_buf, n, o->o_fd->fd_offset)) < 0)
 		return r ;
 		
 	o->o_fd->fd_offset += r ;

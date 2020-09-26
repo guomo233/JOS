@@ -900,7 +900,8 @@ serve_read(envid_t envid, union Fsipc *ipc)
 		return r ;
 	
   // 读文件
-	if ((r = file_read(o->o_file, ret->ret_buf, req->req_n, o->o_fd->fd_offset)) < 0)
+	int n = MIN(sizeof(ret->ret_buf), req->req_n) ; // 传来的 req_n 可能大于 buf
+	if ((r = file_read(o->o_file, ret->ret_buf, n, o->o_fd->fd_offset)) < 0)
 		return r ;
 	
   // 修改文件读写偏移
